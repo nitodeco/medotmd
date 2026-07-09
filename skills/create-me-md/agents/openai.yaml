@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create ME.md"
+  short_description: "Create a useful personal ME.md profile"
+  default_prompt: "Use $create-me-md to interview me and write a strong ME.md profile."
