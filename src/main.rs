@@ -3,7 +3,7 @@ use std::{
     error::Error,
     ffi::OsString,
     fs,
-    io::{self, ErrorKind},
+    io::{self, ErrorKind, IsTerminal},
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
     thread,
@@ -17,6 +17,11 @@ type CliResult<T> = Result<T, Box<dyn Error>>;
 
 const IDENTITY_FILE_CONTENT: &str = "# Me\n";
 const BACKUP_TIMESTAMP_COLLISION_SLEEP_IN_SECS: u64 = 1;
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_RED: &str = "\x1b[31m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_BLUE: &str = "\x1b[34m";
 
 #[derive(Parser)]
 #[command(name = "medotmd")]
@@ -104,6 +109,13 @@ enum TargetStatus {
     Unwritable(String),
 }
 
+enum OutputKind {
+    Success,
+    Warning,
+    Error,
+    Info,
+}
+
 const AGENT_TARGETS: [AgentTarget; 3] = [
     AgentTarget {
         kind: AgentKind::Codex,
@@ -127,7 +139,14 @@ const AGENT_TARGETS: [AgentTarget; 3] = [
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("error: {error}");
+        eprintln!(
+            "{}",
+            format_output(
+                OutputKind::Error,
+                &format!("error: {error}"),
+                io::stderr().is_terminal()
+            )
+        );
         std::process::exit(1);
     }
 }
@@ -196,7 +215,7 @@ fn initialize(
     import_line: &str,
     command_options: &CommandOptions,
 ) -> CliResult<()> {
-    println!("Initializing medotmd");
+    print_output(OutputKind::Info, "Initializing medotmd");
     print_identity_file_action(
         ensure_identity_file(identity_file_path, command_options.dry_run)?,
         identity_file_path,
@@ -212,7 +231,7 @@ fn initialize(
 
     if command_options.dry_run {
         println!();
-        println!("Dry run: no files changed");
+        print_output(OutputKind::Success, "Dry run: no files changed");
     }
 
     Ok(())
@@ -240,16 +259,19 @@ fn ensure_identity_file(
     }
 }
 
-fn print_identity_file_action(identity_file_action: IdentityFileAction, identity_file_path: &Path) {
+fn print_identity_file_action(
+    identity_file_action: IdentityFileAction,
+    _identity_file_path: &Path,
+) {
     match identity_file_action {
         IdentityFileAction::Created => {
-            println!("ME.md: created {}", identity_file_path.display());
+            print_output(OutputKind::Success, "ME.md created");
         }
         IdentityFileAction::Exists => {
-            println!("ME.md: exists {}", identity_file_path.display());
+            print_output(OutputKind::Success, "ME.md exists");
         }
         IdentityFileAction::WouldCreate => {
-            println!("ME.md: would create {}", identity_file_path.display());
+            print_output(OutputKind::Warning, "ME.md would be created");
         }
     }
 }
@@ -281,7 +303,7 @@ fn install_targets(
     if !command_options.dry_run {
         ensure_identity_file(identity_file_path, false)?;
     } else if !identity_file_path.exists() {
-        println!("ME.md: would create {}", identity_file_path.display());
+        print_output(OutputKind::Warning, "ME.md would be created");
     }
 
     for agent_target in AGENT_TARGETS {
@@ -292,10 +314,9 @@ fn install_targets(
         let folder_path = get_agent_folder_path(home_path, &agent_target);
 
         if !folder_path.is_dir() {
-            println!(
-                "{}: skipped, folder missing {}",
-                agent_target.name,
-                folder_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} skipped, folder missing", agent_target.name),
             );
             continue;
         }
@@ -347,43 +368,38 @@ fn install_target_file(
 
 fn print_install_action(
     agent_target: AgentTarget,
-    target_file_path: &Path,
+    _target_file_path: &Path,
     install_action: InstallAction,
 ) {
     match install_action {
         InstallAction::Created => {
-            println!(
-                "{}: created {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} created", agent_target.name),
             );
         }
         InstallAction::Modified => {
-            println!(
-                "{}: installed {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} installed", agent_target.name),
             );
         }
         InstallAction::Unchanged => {
-            println!(
-                "{}: already installed {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} already installed", agent_target.name),
             );
         }
         InstallAction::WouldCreate => {
-            println!(
-                "{}: would create {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} would be created", agent_target.name),
             );
         }
         InstallAction::WouldModify => {
-            println!(
-                "{}: would install {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} would be installed", agent_target.name),
             );
         }
     }
@@ -402,10 +418,9 @@ fn uninstall_targets(
         let folder_path = get_agent_folder_path(home_path, &agent_target);
 
         if !folder_path.is_dir() {
-            println!(
-                "{}: skipped, folder missing {}",
-                agent_target.name,
-                folder_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} skipped, folder missing", agent_target.name),
             );
             continue;
         }
@@ -450,29 +465,26 @@ fn uninstall_target_file(
 
 fn print_uninstall_action(
     agent_target: AgentTarget,
-    target_file_path: &Path,
+    _target_file_path: &Path,
     uninstall_action: UninstallAction,
 ) {
     match uninstall_action {
         UninstallAction::Removed => {
-            println!(
-                "{}: uninstalled {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} uninstalled", agent_target.name),
             );
         }
         UninstallAction::Unchanged => {
-            println!(
-                "{}: not installed {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} not installed", agent_target.name),
             );
         }
         UninstallAction::WouldRemove => {
-            println!(
-                "{}: would uninstall {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} would be uninstalled", agent_target.name),
             );
         }
     }
@@ -494,10 +506,9 @@ fn print_doctor_report(
         let folder_path = get_agent_folder_path(home_path, &agent_target);
 
         if !folder_path.is_dir() {
-            println!(
-                "{}: folder missing {}",
-                agent_target.name,
-                folder_path.display()
+            print_output(
+                OutputKind::Warning,
+                &format!("{} folder missing", agent_target.name),
             );
             continue;
         }
@@ -515,18 +526,15 @@ fn print_identity_file_status(identity_file_path: &Path) -> CliResult<()> {
     match fs::read_to_string(identity_file_path) {
         Ok(identity_file_content) => {
             if identity_file_content.trim().is_empty() {
-                println!(
-                    "ME.md: exists, empty warning {}",
-                    identity_file_path.display()
-                );
+                print_output(OutputKind::Warning, "ME.md exists but is empty");
             } else {
-                println!("ME.md: exists {}", identity_file_path.display());
+                print_output(OutputKind::Success, "ME.md exists");
             }
 
             Ok(())
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            println!("ME.md: missing {}", identity_file_path.display());
+            print_output(OutputKind::Error, "ME.md missing");
 
             Ok(())
         }
@@ -536,50 +544,41 @@ fn print_identity_file_status(identity_file_path: &Path) -> CliResult<()> {
 
 fn print_target_status(
     agent_target: AgentTarget,
-    target_file_path: &Path,
+    _target_file_path: &Path,
     target_status: TargetStatus,
 ) {
     match target_status {
         TargetStatus::Installed => {
-            println!(
-                "{}: installed {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Success,
+                &format!("{} installed", agent_target.name),
             );
         }
         TargetStatus::ImportMissing => {
-            println!(
-                "{}: missing {}",
-                agent_target.name,
-                target_file_path.display()
-            );
+            print_output(OutputKind::Error, &format!("{} missing", agent_target.name));
         }
         TargetStatus::TargetFileMissing => {
-            println!(
-                "{}: target file missing {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Error,
+                &format!("{} target file missing", agent_target.name),
             );
         }
         TargetStatus::Duplicated(count) => {
-            println!(
-                "{}: duplicated import ({count}) {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Error,
+                &format!("{} duplicated import ({count})", agent_target.name),
             );
         }
         TargetStatus::Unreadable(message) => {
-            println!(
-                "{}: unreadable ({message}) {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Error,
+                &format!("{} unreadable ({message})", agent_target.name),
             );
         }
         TargetStatus::Unwritable(message) => {
-            println!(
-                "{}: unwritable ({message}) {}",
-                agent_target.name,
-                target_file_path.display()
+            print_output(
+                OutputKind::Error,
+                &format!("{} unwritable ({message})", agent_target.name),
             );
         }
     }
@@ -632,6 +631,45 @@ fn does_agent_match_filter(agent_target: AgentTarget, maybe_agent_kind: Option<A
     match maybe_agent_kind {
         Some(agent_kind) => agent_target.kind == agent_kind,
         None => true,
+    }
+}
+
+fn print_output(output_kind: OutputKind, message: &str) {
+    println!(
+        "{}",
+        format_output(output_kind, message, io::stdout().is_terminal())
+    );
+}
+
+fn format_output(output_kind: OutputKind, message: &str, is_colored: bool) -> String {
+    let icon = get_output_icon(&output_kind);
+
+    if !is_colored {
+        return format!("{icon} {message}");
+    }
+
+    format!(
+        "{}{icon}{} {message}",
+        get_output_color(&output_kind),
+        ANSI_RESET
+    )
+}
+
+fn get_output_icon(output_kind: &OutputKind) -> &'static str {
+    match output_kind {
+        OutputKind::Success => "✓",
+        OutputKind::Warning => "!",
+        OutputKind::Error => "✗",
+        OutputKind::Info => "•",
+    }
+}
+
+fn get_output_color(output_kind: &OutputKind) -> &'static str {
+    match output_kind {
+        OutputKind::Success => ANSI_GREEN,
+        OutputKind::Warning => ANSI_YELLOW,
+        OutputKind::Error => ANSI_RED,
+        OutputKind::Info => ANSI_BLUE,
     }
 }
 

@@ -94,7 +94,10 @@ fn init_creates_identity_file_and_installs_detected_agents() {
     let codex_content = read_to_string(&codex_file_path);
     let opencode_content = read_to_string(&opencode_file_path);
 
-    assert!(output.contains("Initializing medotmd"));
+    assert!(output.contains("• Initializing medotmd"));
+    assert!(output.contains("✓ ME.md created"));
+    assert!(output.contains("✓ Codex installed"));
+    assert!(output.contains("! Claude skipped, folder missing"));
     assert!(temp_home.path().join(".me/ME.md").exists());
     assert_eq!(count_imports(&codex_content, &import_line), 1);
     assert!(codex_content.contains("existing codex"));
@@ -116,8 +119,10 @@ fn install_dry_run_does_not_change_files() {
         &["install", "--dry-run", "--agent", "claude"],
     ));
 
-    assert!(output.contains("would create"));
-    assert!(output.contains("would install"));
+    assert!(output.contains("would be created"));
+    assert!(output.contains("would be installed"));
+    assert!(output.contains("! ME.md would be created"));
+    assert!(output.contains("! Claude would be installed"));
     assert!(!temp_home.path().join(".me/ME.md").exists());
     assert_eq!(read_to_string(&claude_file_path), "existing claude\n");
     assert_eq!(backup_count(&claude_folder_path, "CLAUDE.md"), 0);
