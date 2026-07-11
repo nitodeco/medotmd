@@ -1,8 +1,8 @@
 [package]
 name = "medotmd"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "A tiny CLI for linking ~/.me/ME.md into local coding agent instruction files"
 repository = "https://github.com/nitodeco/medotmd"
 license = "MIT"

@@ -4,7 +4,7 @@ This guide is for humans and AI agents contributing to `medotmd`.
 
 ## Prerequisites
 
-- Rust 1.85 or newer
+- Rust 1.88 or newer
 - Cargo
 
 ## Local Checks
