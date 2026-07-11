@@ -6,8 +6,8 @@ use crate::{
     agent::AgentKind,
     error::CliResult,
     identity::{
-        edit_identity_file, ensure_identity_file, get_home_path, get_identity_file_path,
-        get_import_line, print_identity_file, print_identity_file_action,
+        edit_identity_file, get_guidance_file_path, get_home_path, get_identity_file_path,
+        get_import_line, print_identity_file,
     },
     output::{OutputKind, print_output},
     target::{install_targets, print_doctor_report, uninstall_targets},
@@ -59,13 +59,17 @@ pub fn run() -> CliResult<()> {
     let cli = Cli::parse();
     let home_path = get_home_path()?;
     let identity_file_path = get_identity_file_path(&home_path);
-    let import_line = get_import_line(&identity_file_path);
+    let guidance_file_path = get_guidance_file_path(&home_path);
+    let identity_import_line = get_import_line(&identity_file_path);
+    let guidance_import_line = get_import_line(&guidance_file_path);
 
     match cli.command {
         CliCommand::Init { dry_run, agent } => initialize(
             &home_path,
             &identity_file_path,
-            &import_line,
+            &guidance_file_path,
+            &identity_import_line,
+            &guidance_import_line,
             &CommandOptions {
                 dry_run,
                 maybe_agent_kind: agent,
@@ -75,7 +79,9 @@ pub fn run() -> CliResult<()> {
         CliCommand::Install { dry_run, agent } => install_targets(
             &home_path,
             &identity_file_path,
-            &import_line,
+            &guidance_file_path,
+            &identity_import_line,
+            &guidance_import_line,
             &CommandOptions {
                 dry_run,
                 maybe_agent_kind: agent,
@@ -83,15 +89,21 @@ pub fn run() -> CliResult<()> {
         )?,
         CliCommand::Uninstall { dry_run, agent } => uninstall_targets(
             &home_path,
-            &import_line,
+            &identity_import_line,
+            &guidance_import_line,
             &CommandOptions {
                 dry_run,
                 maybe_agent_kind: agent,
             },
         )?,
-        CliCommand::Doctor { agent } => {
-            print_doctor_report(&home_path, &identity_file_path, &import_line, agent)?
-        }
+        CliCommand::Doctor { agent } => print_doctor_report(
+            &home_path,
+            &identity_file_path,
+            &guidance_file_path,
+            &identity_import_line,
+            &guidance_import_line,
+            agent,
+        )?,
         CliCommand::Print => print_identity_file(&identity_file_path)?,
     }
 
@@ -101,20 +113,27 @@ pub fn run() -> CliResult<()> {
 fn initialize(
     home_path: &Path,
     identity_file_path: &Path,
-    import_line: &str,
+    guidance_file_path: &Path,
+    identity_import_line: &str,
+    guidance_import_line: &str,
     command_options: &CommandOptions,
 ) -> CliResult<()> {
     print_output(OutputKind::Info, "Initializing medotmd");
-    print_identity_file_action(ensure_identity_file(
+    install_targets(
+        home_path,
         identity_file_path,
-        command_options.dry_run,
-    )?);
-    install_targets(home_path, identity_file_path, import_line, command_options)?;
+        guidance_file_path,
+        identity_import_line,
+        guidance_import_line,
+        command_options,
+    )?;
     println!();
     print_doctor_report(
         home_path,
         identity_file_path,
-        import_line,
+        guidance_file_path,
+        identity_import_line,
+        guidance_import_line,
         command_options.maybe_agent_kind,
     )?;
 

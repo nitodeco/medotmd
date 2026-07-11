@@ -11,7 +11,10 @@ use crate::{
     backup::backup_existing_file,
     cli::CommandOptions,
     error::CliResult,
-    identity::{ensure_identity_file, print_identity_file_status},
+    identity::{
+        ensure_guidance_file, ensure_identity_file, print_guidance_file_action,
+        print_guidance_file_status, print_identity_file_action, print_identity_file_status,
+    },
     output::{OutputKind, print_output},
 };
 
@@ -31,9 +34,9 @@ enum UninstallAction {
 
 enum TargetStatus {
     Installed,
-    ImportMissing,
+    ImportMissing(String),
     TargetFileMissing,
-    Duplicated(usize),
+    Duplicated(String, usize),
     Unreadable(String),
     Unwritable(String),
 }
@@ -41,14 +44,19 @@ enum TargetStatus {
 pub fn install_targets(
     home_path: &Path,
     identity_file_path: &Path,
-    import_line: &str,
+    guidance_file_path: &Path,
+    identity_import_line: &str,
+    guidance_import_line: &str,
     command_options: &CommandOptions,
 ) -> CliResult<()> {
-    if !command_options.dry_run {
-        ensure_identity_file(identity_file_path, false)?;
-    } else if !identity_file_path.exists() {
-        print_output(OutputKind::Warning, "ME.md would be created");
-    }
+    print_identity_file_action(ensure_identity_file(
+        identity_file_path,
+        command_options.dry_run,
+    )?);
+    print_guidance_file_action(ensure_guidance_file(
+        guidance_file_path,
+        command_options.dry_run,
+    )?);
 
     for agent_target in AGENT_TARGETS {
         if !does_agent_match_filter(agent_target, command_options.maybe_agent_kind) {
@@ -66,8 +74,11 @@ pub fn install_targets(
         }
 
         let target_file_path = folder_path.join(agent_target.file_name);
-        let install_action =
-            install_target_file(&target_file_path, import_line, command_options.dry_run)?;
+        let install_action = install_target_file(
+            &target_file_path,
+            &[guidance_import_line, identity_import_line],
+            command_options.dry_run,
+        )?;
 
         print_install_action(agent_target, install_action);
     }
@@ -77,12 +88,12 @@ pub fn install_targets(
 
 fn install_target_file(
     target_file_path: &Path,
-    import_line: &str,
+    import_lines: &[&str],
     is_dry_run: bool,
 ) -> CliResult<InstallAction> {
     match fs::read_to_string(target_file_path) {
         Ok(existing_content) => {
-            if count_exact_import_lines(&existing_content, import_line) > 0 {
+            if has_exactly_one_import_for_each(&existing_content, import_lines) {
                 return Ok(InstallAction::Unchanged);
             }
 
@@ -93,7 +104,7 @@ fn install_target_file(
             backup_existing_file(target_file_path)?;
             fs::write(
                 target_file_path,
-                format!("{import_line}\n{}", existing_content),
+                add_import_lines(&existing_content, import_lines),
             )?;
 
             Ok(InstallAction::Modified)
@@ -102,7 +113,7 @@ fn install_target_file(
             Ok(InstallAction::WouldCreate)
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            fs::write(target_file_path, format!("{import_line}\n"))?;
+            fs::write(target_file_path, format_import_lines(import_lines))?;
 
             Ok(InstallAction::Created)
         }
@@ -147,7 +158,8 @@ fn print_install_action(agent_target: AgentTarget, install_action: InstallAction
 
 pub fn uninstall_targets(
     home_path: &Path,
-    import_line: &str,
+    identity_import_line: &str,
+    guidance_import_line: &str,
     command_options: &CommandOptions,
 ) -> CliResult<()> {
     for agent_target in AGENT_TARGETS {
@@ -166,8 +178,11 @@ pub fn uninstall_targets(
         }
 
         let target_file_path = folder_path.join(agent_target.file_name);
-        let uninstall_action =
-            uninstall_target_file(&target_file_path, import_line, command_options.dry_run)?;
+        let uninstall_action = uninstall_target_file(
+            &target_file_path,
+            &[guidance_import_line, identity_import_line],
+            command_options.dry_run,
+        )?;
 
         print_uninstall_action(agent_target, uninstall_action);
     }
@@ -177,12 +192,15 @@ pub fn uninstall_targets(
 
 fn uninstall_target_file(
     target_file_path: &Path,
-    import_line: &str,
+    import_lines: &[&str],
     is_dry_run: bool,
 ) -> CliResult<UninstallAction> {
     match fs::read_to_string(target_file_path) {
         Ok(existing_content) => {
-            if count_exact_import_lines(&existing_content, import_line) == 0 {
+            if !import_lines
+                .iter()
+                .any(|import_line| count_exact_import_lines(&existing_content, import_line) > 0)
+            {
                 return Ok(UninstallAction::Unchanged);
             }
 
@@ -193,7 +211,7 @@ fn uninstall_target_file(
             backup_existing_file(target_file_path)?;
             fs::write(
                 target_file_path,
-                remove_exact_import_lines(&existing_content, import_line),
+                remove_exact_import_lines(&existing_content, import_lines),
             )?;
 
             Ok(UninstallAction::Removed)
@@ -229,10 +247,13 @@ fn print_uninstall_action(agent_target: AgentTarget, uninstall_action: Uninstall
 pub fn print_doctor_report(
     home_path: &Path,
     identity_file_path: &Path,
-    import_line: &str,
+    guidance_file_path: &Path,
+    identity_import_line: &str,
+    guidance_import_line: &str,
     maybe_agent_kind: Option<AgentKind>,
 ) -> CliResult<()> {
     print_identity_file_status(identity_file_path)?;
+    print_guidance_file_status(guidance_file_path)?;
 
     for agent_target in AGENT_TARGETS {
         if !does_agent_match_filter(agent_target, maybe_agent_kind) {
@@ -250,7 +271,13 @@ pub fn print_doctor_report(
         }
 
         let target_file_path = folder_path.join(agent_target.file_name);
-        let target_status = get_target_status(&target_file_path, import_line);
+        let target_status = get_target_status(
+            &target_file_path,
+            &[
+                ("AGENT.md", guidance_import_line),
+                ("ME.md", identity_import_line),
+            ],
+        );
 
         print_target_status(agent_target, target_status);
     }
@@ -266,8 +293,11 @@ fn print_target_status(agent_target: AgentTarget, target_status: TargetStatus) {
                 &format!("{} installed", agent_target.name),
             );
         }
-        TargetStatus::ImportMissing => {
-            print_output(OutputKind::Error, &format!("{} missing", agent_target.name));
+        TargetStatus::ImportMissing(file_name) => {
+            print_output(
+                OutputKind::Error,
+                &format!("{} missing {file_name} import", agent_target.name),
+            );
         }
         TargetStatus::TargetFileMissing => {
             print_output(
@@ -275,10 +305,13 @@ fn print_target_status(agent_target: AgentTarget, target_status: TargetStatus) {
                 &format!("{} target file missing", agent_target.name),
             );
         }
-        TargetStatus::Duplicated(count) => {
+        TargetStatus::Duplicated(file_name, count) => {
             print_output(
                 OutputKind::Error,
-                &format!("{} duplicated import ({count})", agent_target.name),
+                &format!(
+                    "{} duplicated {file_name} import ({count})",
+                    agent_target.name
+                ),
             );
         }
         TargetStatus::Unreadable(message) => {
@@ -296,7 +329,7 @@ fn print_target_status(agent_target: AgentTarget, target_status: TargetStatus) {
     }
 }
 
-fn get_target_status(target_file_path: &Path, import_line: &str) -> TargetStatus {
+fn get_target_status(target_file_path: &Path, profile_imports: &[(&str, &str)]) -> TargetStatus {
     let existing_content = match fs::read_to_string(target_file_path) {
         Ok(existing_content) => existing_content,
         Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -309,11 +342,15 @@ fn get_target_status(target_file_path: &Path, import_line: &str) -> TargetStatus
         return TargetStatus::Unwritable(error.to_string());
     }
 
-    match count_exact_import_lines(&existing_content, import_line) {
-        0 => TargetStatus::ImportMissing,
-        1 => TargetStatus::Installed,
-        count => TargetStatus::Duplicated(count),
+    for (file_name, import_line) in profile_imports {
+        match count_exact_import_lines(&existing_content, import_line) {
+            0 => return TargetStatus::ImportMissing((*file_name).to_string()),
+            1 => {}
+            count => return TargetStatus::Duplicated((*file_name).to_string(), count),
+        }
     }
+
+    TargetStatus::Installed
 }
 
 fn assert_writable(target_file_path: &Path) -> io::Result<()> {
@@ -333,10 +370,32 @@ fn count_exact_import_lines(content: &str, import_line: &str) -> usize {
     content.lines().filter(|line| *line == import_line).count()
 }
 
-fn remove_exact_import_lines(content: &str, import_line: &str) -> String {
+fn has_exactly_one_import_for_each(content: &str, import_lines: &[&str]) -> bool {
+    import_lines
+        .iter()
+        .all(|import_line| count_exact_import_lines(content, import_line) == 1)
+}
+
+fn format_import_lines(import_lines: &[&str]) -> String {
+    format!("{}\n", import_lines.join("\n"))
+}
+
+fn add_import_lines(content: &str, import_lines: &[&str]) -> String {
+    format!(
+        "{}{}",
+        format_import_lines(import_lines),
+        remove_exact_import_lines(content, import_lines),
+    )
+}
+
+fn remove_exact_import_lines(content: &str, import_lines: &[&str]) -> String {
     let retained_lines = content
         .split_inclusive('\n')
-        .filter(|line| line.trim_end_matches('\n').trim_end_matches('\r') != import_line)
+        .filter(|line| {
+            let normalized_line = line.trim_end_matches('\n').trim_end_matches('\r');
+
+            !import_lines.contains(&normalized_line)
+        })
         .collect::<String>();
 
     if content.ends_with('\n') {

@@ -90,18 +90,27 @@ fn init_creates_identity_file_and_installs_detected_agents() {
     fs::write(&codex_file_path, "existing codex\n").expect("codex file should be written");
 
     let output = assert_success(run_medotmd(temp_home.path(), &["init"]));
-    let import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let identity_import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let guidance_import_line = format!("@{}/.me/AGENT.md", temp_home.path().display());
     let codex_content = read_to_string(&codex_file_path);
     let opencode_content = read_to_string(&opencode_file_path);
 
     assert!(output.contains("• Initializing medotmd"));
     assert!(output.contains("✓ ME.md created"));
+    assert!(output.contains("✓ AGENT.md created"));
     assert!(output.contains("✓ Codex installed"));
     assert!(output.contains("! Claude skipped, folder missing"));
     assert!(temp_home.path().join(".me/ME.md").exists());
-    assert_eq!(count_imports(&codex_content, &import_line), 1);
+    assert!(read_to_string(&temp_home.path().join(".me/AGENT.md")).contains("Profile maintenance"));
+    assert!(
+        read_to_string(&temp_home.path().join(".me/AGENT.md"))
+            .contains("Do not inspect or evaluate ME.md")
+    );
+    assert_eq!(count_imports(&codex_content, &identity_import_line), 1);
+    assert_eq!(count_imports(&codex_content, &guidance_import_line), 1);
     assert!(codex_content.contains("existing codex"));
-    assert_eq!(count_imports(&opencode_content, &import_line), 1);
+    assert_eq!(count_imports(&opencode_content, &identity_import_line), 1);
+    assert_eq!(count_imports(&opencode_content, &guidance_import_line), 1);
     assert!(!temp_home.path().join(".claude/CLAUDE.md").exists());
 }
 
@@ -122,8 +131,10 @@ fn install_dry_run_does_not_change_files() {
     assert!(output.contains("would be created"));
     assert!(output.contains("would be installed"));
     assert!(output.contains("! ME.md would be created"));
+    assert!(output.contains("! AGENT.md would be created"));
     assert!(output.contains("! Claude would be installed"));
     assert!(!temp_home.path().join(".me/ME.md").exists());
+    assert!(!temp_home.path().join(".me/AGENT.md").exists());
     assert_eq!(read_to_string(&claude_file_path), "existing claude\n");
     assert_eq!(backup_count(&claude_folder_path, "CLAUDE.md"), 0);
 }
@@ -146,16 +157,151 @@ fn install_agent_filter_only_installs_selected_agent() {
         &["install", "--agent", "claude"],
     ));
 
-    let import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let identity_import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let guidance_import_line = format!("@{}/.me/AGENT.md", temp_home.path().display());
     let codex_content = read_to_string(&codex_file_path);
     let claude_content = read_to_string(&claude_file_path);
 
-    assert_eq!(count_imports(&codex_content, &import_line), 0);
-    assert_eq!(count_imports(&claude_content, &import_line), 1);
+    assert_eq!(count_imports(&codex_content, &identity_import_line), 0);
+    assert_eq!(count_imports(&codex_content, &guidance_import_line), 0);
+    assert_eq!(count_imports(&claude_content, &identity_import_line), 1);
+    assert_eq!(count_imports(&claude_content, &guidance_import_line), 1);
 }
 
 #[test]
-fn uninstall_removes_exact_import_and_preserves_content() {
+fn install_upgrades_a_me_only_target() {
+    let temp_home = TempHome::new("upgrade");
+    let codex_folder_path = temp_home.path().join(".codex");
+    let codex_file_path = codex_folder_path.join("AGENTS.md");
+    let identity_file_path = temp_home.path().join(".me/ME.md");
+    let identity_import_line = format!("@{}", identity_file_path.display());
+    let guidance_import_line = format!("@{}/.me/AGENT.md", temp_home.path().display());
+
+    fs::create_dir_all(&codex_folder_path).expect("codex folder should be created");
+    fs::create_dir_all(
+        identity_file_path
+            .parent()
+            .expect("identity folder should exist"),
+    )
+    .expect("identity folder should be created");
+    fs::write(&identity_file_path, "# Me\n").expect("identity file should be written");
+    fs::write(
+        &codex_file_path,
+        format!("{identity_import_line}\nexisting codex\n"),
+    )
+    .expect("codex file should be written");
+
+    assert_success(run_medotmd(
+        temp_home.path(),
+        &["install", "--agent", "codex"],
+    ));
+
+    let codex_content = read_to_string(&codex_file_path);
+
+    assert_eq!(count_imports(&codex_content, &identity_import_line), 1);
+    assert_eq!(count_imports(&codex_content, &guidance_import_line), 1);
+    assert!(codex_content.ends_with("existing codex\n"));
+    assert_eq!(backup_count(&codex_folder_path, "AGENTS.md"), 1);
+}
+
+#[test]
+fn doctor_reports_missing_guidance_import() {
+    let temp_home = TempHome::new("doctor-imports");
+    let codex_folder_path = temp_home.path().join(".codex");
+    let codex_file_path = codex_folder_path.join("AGENTS.md");
+    let identity_file_path = temp_home.path().join(".me/ME.md");
+    let guidance_file_path = temp_home.path().join(".me/AGENT.md");
+    let identity_import_line = format!("@{}", identity_file_path.display());
+
+    fs::create_dir_all(&codex_folder_path).expect("codex folder should be created");
+    fs::create_dir_all(
+        identity_file_path
+            .parent()
+            .expect("identity folder should exist"),
+    )
+    .expect("identity folder should be created");
+    fs::write(&identity_file_path, "# Me\n").expect("identity file should be written");
+    fs::write(&guidance_file_path, "guidance\n").expect("guidance file should be written");
+    fs::write(&codex_file_path, format!("{identity_import_line}\n"))
+        .expect("codex file should be written");
+
+    let output = assert_success(run_medotmd(
+        temp_home.path(),
+        &["doctor", "--agent", "codex"],
+    ));
+
+    assert!(output.contains("✗ Codex missing AGENT.md import"));
+}
+
+#[test]
+fn doctor_reports_duplicated_guidance_import() {
+    let temp_home = TempHome::new("doctor-duplicates");
+    let codex_folder_path = temp_home.path().join(".codex");
+    let codex_file_path = codex_folder_path.join("AGENTS.md");
+    let identity_file_path = temp_home.path().join(".me/ME.md");
+    let guidance_file_path = temp_home.path().join(".me/AGENT.md");
+    let identity_import_line = format!("@{}", identity_file_path.display());
+    let guidance_import_line = format!("@{}", guidance_file_path.display());
+
+    fs::create_dir_all(&codex_folder_path).expect("codex folder should be created");
+    fs::create_dir_all(
+        identity_file_path
+            .parent()
+            .expect("identity folder should exist"),
+    )
+    .expect("identity folder should be created");
+    fs::write(&identity_file_path, "# Me\n").expect("identity file should be written");
+    fs::write(&guidance_file_path, "guidance\n").expect("guidance file should be written");
+    fs::write(
+        &codex_file_path,
+        format!("{guidance_import_line}\n{guidance_import_line}\n{identity_import_line}\n"),
+    )
+    .expect("codex file should be written");
+
+    let output = assert_success(run_medotmd(
+        temp_home.path(),
+        &["doctor", "--agent", "codex"],
+    ));
+
+    assert!(output.contains("✗ Codex duplicated AGENT.md import (2)"));
+}
+
+#[test]
+fn doctor_reports_empty_guidance_file() {
+    let temp_home = TempHome::new("doctor-guidance");
+    let codex_folder_path = temp_home.path().join(".codex");
+    let codex_file_path = codex_folder_path.join("AGENTS.md");
+    let identity_file_path = temp_home.path().join(".me/ME.md");
+    let guidance_file_path = temp_home.path().join(".me/AGENT.md");
+    let identity_import_line = format!("@{}", identity_file_path.display());
+    let guidance_import_line = format!("@{}", guidance_file_path.display());
+
+    fs::create_dir_all(&codex_folder_path).expect("codex folder should be created");
+    fs::create_dir_all(
+        identity_file_path
+            .parent()
+            .expect("identity folder should exist"),
+    )
+    .expect("identity folder should be created");
+    fs::write(&identity_file_path, "# Me\n").expect("identity file should be written");
+    fs::write(&guidance_file_path, "").expect("guidance file should be written");
+    fs::write(
+        &codex_file_path,
+        format!("{guidance_import_line}\n{identity_import_line}\n"),
+    )
+    .expect("codex file should be written");
+
+    let output = assert_success(run_medotmd(
+        temp_home.path(),
+        &["doctor", "--agent", "codex"],
+    ));
+
+    assert!(output.contains("! AGENT.md exists but is empty"));
+    assert!(output.contains("✓ Codex installed"));
+}
+
+#[test]
+fn uninstall_removes_exact_imports_and_preserves_profile_files() {
     let temp_home = TempHome::new("uninstall");
     let codex_folder_path = temp_home.path().join(".codex");
     let codex_file_path = codex_folder_path.join("AGENTS.md");
@@ -172,11 +318,14 @@ fn uninstall_removes_exact_import_and_preserves_content() {
         &["uninstall", "--agent", "codex"],
     ));
 
-    let import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let identity_import_line = format!("@{}/.me/ME.md", temp_home.path().display());
+    let guidance_import_line = format!("@{}/.me/AGENT.md", temp_home.path().display());
     let codex_content = read_to_string(&codex_file_path);
 
-    assert_eq!(count_imports(&codex_content, &import_line), 0);
+    assert_eq!(count_imports(&codex_content, &identity_import_line), 0);
+    assert_eq!(count_imports(&codex_content, &guidance_import_line), 0);
     assert_eq!(codex_content, "existing codex\n");
     assert_eq!(backup_count(&codex_folder_path, "AGENTS.md"), 2);
     assert!(temp_home.path().join(".me/ME.md").exists());
+    assert!(temp_home.path().join(".me/AGENT.md").exists());
 }
