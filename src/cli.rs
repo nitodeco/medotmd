@@ -11,6 +11,7 @@ use crate::{
     },
     output::{OutputKind, print_output},
     target::{install_targets, print_doctor_report, uninstall_targets},
+    update::update,
 };
 
 #[derive(Parser)]
@@ -48,6 +49,7 @@ enum CliCommand {
         agent: Option<AgentKind>,
     },
     Print,
+    Update,
 }
 
 pub struct CommandOptions {
@@ -57,6 +59,11 @@ pub struct CommandOptions {
 
 pub fn run() -> CliResult<()> {
     let cli = Cli::parse();
+
+    if matches!(&cli.command, CliCommand::Update) {
+        return update();
+    }
+
     let home_path = get_home_path()?;
     let identity_file_path = get_identity_file_path(&home_path);
     let guidance_file_path = get_guidance_file_path(&home_path);
@@ -105,6 +112,7 @@ pub fn run() -> CliResult<()> {
             agent,
         )?,
         CliCommand::Print => print_identity_file(&identity_file_path)?,
+        CliCommand::Update => unreachable!(),
     }
 
     Ok(())

@@ -5,6 +5,7 @@ mod error;
 mod identity;
 mod output;
 mod target;
+mod update;
 
 use std::io::{self, IsTerminal};
 
