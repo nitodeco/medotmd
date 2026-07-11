@@ -6,10 +6,12 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -24,8 +26,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.85.1
       - run: |
           crate_version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
           test "v$crate_version" = "$GITHUB_REF_NAME"
@@ -36,21 +40,69 @@ jobs:
           cp "target/${{ matrix.target }}/release/medotmd" package/medotmd
           tar -C package -czf "dist/medotmd-${{ matrix.target }}.tar.gz" medotmd
           cd dist
-          shasum -a 256 "medotmd-${{ matrix.target }}.tar.gz" > "medotmd-${{ matrix.target }}.tar.gz.sha256"
-      - uses: actions/upload-artifact@v4
+          archive_file_name="medotmd-${{ matrix.target }}.tar.gz"
+          archive_checksum="$(shasum -a 256 "$archive_file_name" | awk '{ print $1 }')"
+          printf '%s  %s\n' "$archive_checksum" "$archive_file_name" > "$archive_file_name.sha256"
+          printf 'version=%s\ntag=%s\ntarget=%s\narchive=%s\nsha256=%s\n' \
+            "${GITHUB_REF_NAME#v}" \
+            "$GITHUB_REF_NAME" \
+            "${{ matrix.target }}" \
+            "$archive_file_name" \
+            "$archive_checksum" > "medotmd-${{ matrix.target }}.manifest"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: medotmd-${{ matrix.target }}
           path: dist/*
 
-  publish:
+  sign:
     runs-on: ubuntu-latest
     needs: build
+    environment: release
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Sign release artifacts
+        env:
+          MEDOTMD_RELEASE_SIGNING_KEY: ${{ secrets.MEDOTMD_RELEASE_SIGNING_KEY }}
+        run: |
+          test -n "$MEDOTMD_RELEASE_SIGNING_KEY"
+          umask 077
+          signing_key_path="$(mktemp)"
+          trap 'rm -f "$signing_key_path"' EXIT
+          printf '%s' "$MEDOTMD_RELEASE_SIGNING_KEY" > "$signing_key_path"
+          cp install.sh dist/install.sh
+          for release_file_path in dist/*.tar.gz dist/*.manifest dist/install.sh; do
+            openssl pkeyutl -sign -rawin \
+              -inkey "$signing_key_path" \
+              -in "$release_file_path" \
+              -out "$release_file_path.sig"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: medotmd-signatures
+          path: |
+            dist/*.sig
+            dist/install.sh
+
+  publish:
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - sign
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631
         with:
           files: dist/*

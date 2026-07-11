@@ -6,8 +6,8 @@ use crate::{
     agent::AgentKind,
     error::CliResult,
     identity::{
-        edit_identity_file, get_guidance_file_path, get_home_path, get_identity_file_path,
-        get_import_line, print_identity_file,
+        DoctorHealth, edit_identity_file, get_guidance_file_path, get_home_path,
+        get_identity_file_path, get_import_line, print_identity_file,
     },
     output::{OutputKind, print_output},
     target::{install_targets, print_doctor_report, uninstall_targets},
@@ -81,8 +81,8 @@ pub fn run() -> CliResult<()> {
                 dry_run,
                 maybe_agent_kind: agent,
             },
-        )?,
-        CliCommand::Edit => edit_identity_file(&identity_file_path)?,
+        ),
+        CliCommand::Edit => edit_identity_file(&identity_file_path),
         CliCommand::Install { dry_run, agent } => install_targets(
             &home_path,
             &identity_file_path,
@@ -93,7 +93,7 @@ pub fn run() -> CliResult<()> {
                 dry_run,
                 maybe_agent_kind: agent,
             },
-        )?,
+        ),
         CliCommand::Uninstall { dry_run, agent } => uninstall_targets(
             &home_path,
             &identity_import_line,
@@ -102,20 +102,18 @@ pub fn run() -> CliResult<()> {
                 dry_run,
                 maybe_agent_kind: agent,
             },
-        )?,
-        CliCommand::Doctor { agent } => print_doctor_report(
+        ),
+        CliCommand::Doctor { agent } => ensure_healthy_doctor_report(print_doctor_report(
             &home_path,
             &identity_file_path,
             &guidance_file_path,
             &identity_import_line,
             &guidance_import_line,
             agent,
-        )?,
-        CliCommand::Print => print_identity_file(&identity_file_path)?,
+        )),
+        CliCommand::Print => print_identity_file(&identity_file_path),
         CliCommand::Update => unreachable!(),
     }
-
-    Ok(())
 }
 
 fn initialize(
@@ -136,19 +134,27 @@ fn initialize(
         command_options,
     )?;
     println!();
-    print_doctor_report(
+    let doctor_health = print_doctor_report(
         home_path,
         identity_file_path,
         guidance_file_path,
         identity_import_line,
         guidance_import_line,
         command_options.maybe_agent_kind,
-    )?;
+    );
 
     if command_options.dry_run {
         println!();
         print_output(OutputKind::Success, "Dry run: no files changed");
     }
 
-    Ok(())
+    ensure_healthy_doctor_report(doctor_health)
+}
+
+fn ensure_healthy_doctor_report(doctor_health: DoctorHealth) -> CliResult<()> {
+    if doctor_health.is_healthy() {
+        return Ok(());
+    }
+
+    Err("doctor found setup errors".into())
 }

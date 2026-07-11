@@ -34,12 +34,27 @@ pub const AGENT_TARGETS: [AgentTarget; 3] = [
         kind: AgentKind::Opencode,
         name: "OpenCode",
         folder_relative_path: ".config/opencode",
-        file_name: "AGENTS.md",
+        file_name: "opencode.jsonc",
     },
 ];
 
+pub const OPENCODE_CONFIG_FILE_NAMES: [&str; 3] =
+    ["config.json", "opencode.json", "opencode.jsonc"];
+
 pub fn get_agent_folder_path(home_path: &Path, agent_target: &AgentTarget) -> PathBuf {
     home_path.join(agent_target.folder_relative_path)
+}
+
+pub fn get_opencode_config_file_paths(opencode_folder_path: &Path) -> [PathBuf; 3] {
+    OPENCODE_CONFIG_FILE_NAMES.map(|file_name| opencode_folder_path.join(file_name))
+}
+
+pub fn get_opencode_config_file_path(opencode_folder_path: &Path) -> PathBuf {
+    get_opencode_config_file_paths(opencode_folder_path)
+        .into_iter()
+        .rev()
+        .find(|config_file_path| config_file_path.exists())
+        .unwrap_or_else(|| opencode_folder_path.join("opencode.jsonc"))
 }
 
 pub fn does_agent_match_filter(

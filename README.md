@@ -6,17 +6,39 @@ It currently supports:
 
 - Codex: `~/.codex/AGENTS.md`
 - Claude Code: `~/.claude/CLAUDE.md`
-- OpenCode: `~/.config/opencode/AGENTS.md`
+- OpenCode: `~/.config/opencode/{config.json,opencode.json,opencode.jsonc}`
 
-It only manages the exact `@/absolute/path/to/.me/ME.md` import line. It does not sync memory, inject prompts at runtime, authenticate agents, or manage project-specific rules.
+It only manages the exact absolute imports for `~/.me/AGENT.md` and `~/.me/ME.md`. It does not sync memory, inject prompts at runtime, authenticate agents, or manage project-specific rules.
 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/nitodeco/medotmd/main/install.sh | sh
+installer_dir="$(mktemp -d)"
+trap 'rm -rf "$installer_dir"' EXIT
+
+curl -fsSL \
+  https://github.com/nitodeco/medotmd/releases/latest/download/install.sh \
+  -o "$installer_dir/install.sh"
+curl -fsSL \
+  https://github.com/nitodeco/medotmd/releases/latest/download/install.sh.sig \
+  -o "$installer_dir/install.sh.sig"
+
+cat > "$installer_dir/release-signing-public-key.pem" <<'EOF'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA+vCqLtCTcrwVqJFp+zb6+KUpIZqJi+5VcSu/L/b2+94=
+-----END PUBLIC KEY-----
+EOF
+
+openssl pkeyutl -verify -rawin -pubin \
+  -inkey "$installer_dir/release-signing-public-key.pem" \
+  -in "$installer_dir/install.sh" \
+  -sigfile "$installer_dir/install.sh.sig" >/dev/null
+sh "$installer_dir/install.sh"
 ```
 
-The installer downloads the latest release for your platform, verifies the checksum, and installs `medotmd` into `~/.local/bin`.
+This requires `curl`, `openssl`, `tar`, and `sh`. The bootstrap downloads a signed installer asset from GitHub Releases and verifies its detached Ed25519 signature before executing it. The installer downloads the latest signed release for your platform, verifies its signed manifest, checksum, and archive signature, then installs `medotmd` into `~/.local/bin`.
+
+To install a specific release, replace both `latest` URL segments with its release tag, such as `v0.5.0`, and run `MEDOTMD_VERSION=v0.5.0 sh "$installer_dir/install.sh"` as the final command. Releases published before the signed-installer change do not have these assets.
 
 ## Setup
 
@@ -37,7 +59,10 @@ medotmd install
 medotmd uninstall
 medotmd doctor
 medotmd print
+medotmd update
 ```
+
+`medotmd update` installs a newer stable GitHub Release only after verifying its signed manifest and release archive. It leaves the current binary in place when no update is available.
 
 Use `--dry-run` before changing files:
 
@@ -66,7 +91,7 @@ AGENTS.md.medotmd.bak-YYYYMMDD-HHMMSS
 CLAUDE.md.medotmd.bak-YYYYMMDD-HHMMSS
 ```
 
-`uninstall` removes only the exact import line managed by `medotmd` and leaves `~/.me/ME.md` untouched.
+`uninstall` removes only the exact imports managed by `medotmd` and leaves `~/.me/ME.md` untouched.
 
 ## Develop
 
